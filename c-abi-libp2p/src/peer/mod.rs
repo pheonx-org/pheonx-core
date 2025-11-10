@@ -1,5 +1,9 @@
 //! Peer-related primitives and utilities.
 
+pub mod manager;
+
+pub use manager::{PeerCommand, PeerManager, PeerManagerHandle};
+
 /// Represents the local peer identity and metadata.
 #[derive(Debug, Default, Clone)]
 pub struct PeerInfo {
