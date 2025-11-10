@@ -10,6 +10,8 @@ crate-type = ["cdylib"]   # gives .dll/.so/.dylib
 anyhow = "1"
 base64 = "0.22"
 libp2p = { version = "0.54", features = ["kad", "gossipsub", "noise", "yamux", "quic"] }
+futures = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
