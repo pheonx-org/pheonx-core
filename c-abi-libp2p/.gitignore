@@ -2,4 +2,4 @@
 target/
 
 #Files#
-*.h
+cabi-rust-libp2p.h
