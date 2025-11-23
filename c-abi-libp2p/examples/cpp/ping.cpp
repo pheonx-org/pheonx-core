@@ -1,8 +1,12 @@
 ﻿#include <iostream>
 #include <cerrno>
+#include <string>
+#include <thread>
+#include <chrono>
+#include <stdexcept>
 
 // Crossplatform
-#ifdef WIN32
+#ifdef _WIN32
 #include <windows.h>
 using LibHandle = HMODULE;
 #define LOAD_LIB(path) LoadLibraryA(path)
@@ -15,11 +19,12 @@ using LibHandle = void*;
 #define LOAD_LIB(path) dlopen(path, RTLD_LAZY)
 #define GET_PROC(lib, name) dlsym(lib, name)
 #define CLOSE_LIB(lib) dlclose(lib)
-constexpr auto LIB_NAME = "cabi_rust_libp2p.so"
+constexpr auto LIB_NAME = "cabi_rust_libp2p.so";
 #endif
 
 using std::cout;
 using std::cerr;
+using std::string;
 
 // Operation completed successfully.
 constexpr int CABI_STATUS_SUCCESS = 0;
@@ -29,6 +34,8 @@ constexpr int CABI_STATUS_NULL_POINTER = 1;
 constexpr int CABI_STATUS_INVALID_ARGUMENT = 2;
 // Internal runtime error – check logs for details.
 constexpr int CABI_STATUS_INTERNAL_ERROR = 3;
+// Basic IP address for the two peers
+constexpr const char* CLIENT_IP_ADDR = "127.0.0.1";
 
 using InitTracingFunc = int (*)();
 using NewNodeFunc = void* (*)(bool useQuic);
@@ -45,6 +52,14 @@ struct CabiRustLibp2p
   FreeNodeFunc    FreeNode{};
 };
 
+struct Arguments
+{
+  bool    useQuic       = false;
+  string  dialPort    = "41001";
+  string  listenPort  = "41000";
+  float   duration      = 10.0f;
+};
+
 bool loadAbi(LibHandle lib, CabiRustLibp2p& abi)
 {
   abi.InitTracing = reinterpret_cast<InitTracingFunc>(GET_PROC(lib, "cabi_init_tracing"));
@@ -57,7 +72,71 @@ bool loadAbi(LibHandle lib, CabiRustLibp2p& abi)
           abi.ListenNode && abi.DialNode && abi.FreeNode;
 }
 
-int main()
+Arguments parseArgs(int argc, char** argv)
+{
+  Arguments args;
+
+  for (int i = 1; i < argc; ++i)
+  {
+    const string arg = argv[i];
+
+    if (arg == "--use-quic")
+    {
+      args.useQuic = true;
+    }
+    else if (arg == "--lport" && i + 1 < argc)
+    {
+      args.listenPort = argv[++i];
+    }
+    else if (arg == "--dport" && i + 1 < argc)
+    {
+      args.dialPort = argv[++i];
+    }
+    else if (arg == "--duration" && i + 1 < argc)
+    {
+      args.duration = std::stof(argv[++i]);
+    }
+    else if (arg == "--help" || arg == "-h")
+    {
+      cout << "Usage: ping [--use-quic] [--lport <int>] [--dport <int>] [--duration <seconds>]\n";
+      std::exit(0);
+    }
+    else
+    {
+      cerr << "Unknown argument: " << arg << "\n";
+      std::exit(1);
+    }
+  }
+
+  return args;
+}
+
+string toMultiaddr(const string& port, bool useQuic)
+{
+  if (useQuic)
+  {
+    return "/ip4/127.0.0.1/udp/" + port + "/quic-v1";
+  }
+
+  return "/ip4/127.0.0.1/tcp/" + port;
+}
+
+string statusMessage(int status)
+{
+  switch (status)
+  {
+  case CABI_STATUS_SUCCESS:
+    return "0k";
+  case CABI_STATUS_NULL_POINTER:
+    return "Null pointer passed into ABI";
+  case CABI_STATUS_INVALID_ARGUMENT:
+    return "Invalid argument (multiaddr or UTF-8)";
+  default:
+    return "Internal error – inspect Rust logs for details";
+  }
+}
+
+int main(int argc, char** argv)
 {
   LibHandle lib = LOAD_LIB(LIB_NAME);
   if (!lib)
@@ -67,14 +146,69 @@ int main()
   }
 
   // Try get functions from library
-  CabiRustLibp2p abi;
-  if (loadAbi(lib, abi))
+  CabiRustLibp2p abi{};
+  if (!loadAbi(lib, abi))
   {
     cerr << "Missing required functions in library \n";
+    CLOSE_LIB(lib);
+    return 1;
   }
 
-  // Try init cabi's tracing
+  const Arguments args = parseArgs(argc, argv);
+  const auto listenerAddr = toMultiaddr(args.listenPort, args.useQuic);
+  const auto dialerAddr = toMultiaddr(args.dialPort, args.useQuic);
 
+  // Try init cabi's tracing
+  if (abi.InitTracing() != CABI_STATUS_SUCCESS)
+  {
+    cerr << "Failed to initialize trcing. Continuing without tracing\n";
+  }
+
+  try
+  {
+    // Step 1. Create Node
+    void* node = abi.NewNode(args.useQuic);
+    if (!node)
+    {
+      throw std::runtime_error("cabi_node_new returned NULL, check Rust logs");
+    }
+
+
+    // Step 2. Listen port. Begin Listening
+    auto status = abi.ListenNode(node, listenerAddr.c_str());
+    cout << "Listening on: " << CLIENT_IP_ADDR << ":" << args.listenPort
+      << " (" << listenerAddr << ")\n";
+    if (status != CABI_STATUS_SUCCESS)
+    {
+      abi.FreeNode(node);
+      throw std::runtime_error("cabi_node_listen failed: " + statusMessage(status));
+    }
+
+    // Start delay, waiting for listener to be ready
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+
+    // Step 3. Dial to other client
+    status = abi.DialNode(node, dialerAddr.c_str());
+    if (status != CABI_STATUS_SUCCESS)
+    {
+      abi.FreeNode(node);
+      throw std::runtime_error("cabi_node_dial failed: " + statusMessage(status));
+    }
+
+
+    // Step 4. Keeping node alive for duration
+    std::this_thread::sleep_for(std::chrono::duration<float>(args.duration));
+
+    // Step 5. Don't forget to free node
+    abi.FreeNode(node);
+  }
+  catch (const std::exception& ex)
+  {
+    cerr << "Fatal error: " << ex.what() << "\n";
+    CLOSE_LIB(lib);
+    return 1;
+  }
 
 
   CLOSE_LIB(lib);
