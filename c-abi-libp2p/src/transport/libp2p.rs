@@ -12,7 +12,7 @@ use libp2p::{
     kad::{self, store::MemoryStore},
     noise, ping, quic,
     swarm::{Config as SwarmConfig, Swarm},
-    tcp, PeerId,
+    tcp, PeerId, autonat,
 };
 use std::time::Duration;
 
@@ -23,6 +23,7 @@ pub struct NetworkBehaviour {
     pub kademlia: kad::Behaviour<MemoryStore>,
     pub ping: ping::Behaviour,
     pub identify: identify::Behaviour,
+    pub autonat: autonat::Behaviour,
 }
 
 /// Event type produced by the composed [`NetworkBehaviour`].
@@ -31,6 +32,7 @@ pub enum BehaviourEvent {
     Kademlia(kad::Event),
     Ping(ping::Event),
     Identify(identify::Event),
+    Autonat(autonat::Event),
 }
 
 impl From<kad::Event> for BehaviourEvent {
@@ -48,6 +50,12 @@ impl From<ping::Event> for BehaviourEvent {
 impl From<identify::Event> for BehaviourEvent {
     fn from(event: identify::Event) -> Self {
         Self::Identify(event)
+    }
+}
+
+impl From<autonat::Event> for BehaviourEvent {
+    fn from(event: autonat::Event) -> Self {
+        Self::Autonat(event)
     }
 }
 
@@ -89,11 +97,13 @@ impl TransportConfig {
         let ping_config = ping::Config::new();
         let identify_config = identify::Config::new("/cabi/1.0.0".into(), keypair.public())
             .with_interval(Duration::from_secs(30));
+        let autonat_config = autonat::Config::default();
 
         NetworkBehaviour {
             kademlia: kad::Behaviour::with_config(peer_id, store, kad_config),
             ping: ping::Behaviour::new(ping_config),
             identify: identify::Behaviour::new(identify_config),
+            autonat: autonat::Behaviour::new(peer_id, autonat_config),
         }
     }
 

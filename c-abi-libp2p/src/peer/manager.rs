@@ -179,6 +179,9 @@ impl PeerManager {
 
     fn handle_behaviour_event(&mut self, event: BehaviourEvent) {
         match event {
+            BehaviourEvent::Autonat(event) => {
+                tracing::debug!(target:"peer", ?event, "autonat event");
+            }
             BehaviourEvent::Kademlia(event) => {
                 tracing::debug!(target: "peer", ?event, "kademlia event");
             }
