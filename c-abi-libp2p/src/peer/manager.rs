@@ -182,9 +182,6 @@ impl PeerManager {
     /// Handles events from additional network's features
     fn handle_behaviour_event(&mut self, event: BehaviourEvent) {
         match event {
-            BehaviourEvent::Autonat(event) => {
-                tracing::debug!(target:"peer", ?event, "autonat event");
-            }
             BehaviourEvent::Kademlia(event) => {
                 tracing::debug!(target: "peer", ?event, "kademlia event");
             }
@@ -198,6 +195,15 @@ impl PeerManager {
             },
             BehaviourEvent::Identify(event) => {
                 tracing::debug!(target: "peer", ?event, "identify event");
+            }
+            BehaviourEvent::Autonat(event) => {
+                tracing::debug!(target:"peer", ?event, "autonat event");
+            }
+            BehaviourEvent::RelayClient(event) => {
+                tracing::debug!(target: "peer", ?event, "relay client event");
+            }
+            BehaviourEvent::RelayServer(event) => {
+                tracing::debug!(target: "peer", ?event, "relay server event");
             }
         }
     }
