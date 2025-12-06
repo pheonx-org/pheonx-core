@@ -1,4 +1,0 @@
-# External Python dependencies for the ping example (with pinned versions).
-# The script currently relies only on the Python standard library, so the list
-# stays empty until we introduce third-party packages.
-
