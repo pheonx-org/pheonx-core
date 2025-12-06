@@ -48,6 +48,12 @@ PeerManager::run() — asynchronous loop
   - stop the manager (`Shutdown`).
 - `SwarmEvent`s are logged and forwarded to `handle_behaviour_event` so we can observe notifications from `Kademlia`, `Ping`, and `Identify`.
 
+### AutoNAT reachability hints
+
+- `PeerManager` subscribes to `BehaviourEvent::Autonat` and stores the most recent `NatStatus` update (public, private, or unknown) in a watch channel.
+- The new C-ABI helper `cabi_autonat_status` exposes that status to clients
+- Client apps can watch the status and restart the node with `hop_relay = true` once AutoNAT reports a public address, enabling relay services after public reachability is confirmed.
+
 ## 3. Where the network identity comes from
 
 - During start-up `TransportConfig::build` picks or generates an `identity::Keypair`.
