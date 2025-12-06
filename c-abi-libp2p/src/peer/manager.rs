@@ -9,6 +9,7 @@ use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use libp2p::{
     core::Multiaddr,
+    gossipsub,
     identity,
     swarm::{Swarm, SwarmEvent},
     PeerId,
@@ -16,7 +17,10 @@ use libp2p::{
 };
 use tokio::sync::{mpsc, watch};
 
-use crate::transport::{BehaviourEvent, NetworkBehaviour, TransportConfig};
+use crate::{
+    messaging::MessageQueueSender,
+    transport::{BehaviourEvent, NetworkBehaviour, TransportConfig},
+};
 
 /// Commands supported by the [`PeerManager`] event loop.
 #[derive(Debug)]
@@ -25,6 +29,8 @@ pub enum PeerCommand {
     StartListening(Multiaddr),
     /// Dial the given remote multi-address.
     Dial(Multiaddr),
+    /// Publish a payload to the gossipsub topic.
+    Publish(Vec<u8>),
     /// Shut the manager down gracefully.
     Shutdown,
 }
@@ -58,6 +64,14 @@ impl PeerManagerHandle {
             .map_err(|err| anyhow!("peer manager command channel closed: {err}"))
     }
 
+    /// Publishes a message to connected peers via gossipsub.
+    pub async fn publish(&self, payload: Vec<u8>) -> Result<()> {
+        self.command_sender
+            .send(PeerCommand::Publish(payload))
+            .await
+            .map_err(|err| anyhow!("peer manager command channel closed: {err}"))
+    }
+
     /// Enqueues the shutdown command.
     pub async fn shutdown(&self) -> Result<()> {
         self.command_sender
@@ -73,22 +87,37 @@ pub struct PeerManager {
     command_receiver: mpsc::Receiver<PeerCommand>,
     local_peer_id: PeerId,
     keypair: identity::Keypair,
+    inbound_sender: MessageQueueSender,
+    gossipsub_topic: gossipsub::IdentTopic,
     autonat_status: watch::Sender<autonat::NatStatus>,
 }
 
 impl PeerManager {
     /// Creates a new [`PeerManager`] instance alongside a [`PeerManagerHandle`].
-    pub fn new(config: TransportConfig) -> Result<(Self, PeerManagerHandle)> {
+    pub fn new(
+        config: TransportConfig,
+        inbound_sender: MessageQueueSender,
+    ) -> Result<(Self, PeerManagerHandle)> {
         let (keypair, swarm) = config.build()?;
         let local_peer_id = PeerId::from(keypair.public());
         let (command_sender, command_receiver) = mpsc::channel(32);
         let (autonat_status, autonat_status_receiver) = watch::channel(autonat::NatStatus::Unknown);
+
+        let mut swarm = swarm;
+        let gossipsub_topic = gossipsub::IdentTopic::new("echo");
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&gossipsub_topic)
+            .map_err(|err| anyhow!("failed to subscribe to gossipsub topic: {err}"))?;
 
         let manager = Self {
             swarm,
             command_receiver,
             local_peer_id,
             keypair,
+            inbound_sender,
+            gossipsub_topic,
             autonat_status,
         };
 
@@ -140,6 +169,18 @@ impl PeerManager {
                 match self.swarm.dial(address.clone()) {
                     Ok(_) => tracing::info!(target: "peer", %address, "dialing remote"),
                     Err(err) => tracing::error!(target: "peer", %address, %err, "failed to dial"),
+                }
+                Ok(false)
+            }
+            PeerCommand::Publish(payload) => {
+                match self
+                    .swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(self.gossipsub_topic.clone(), payload)
+                {
+                    Ok(_) => tracing::info!(target: "peer", "published message"),
+                    Err(err) => tracing::warn!(target: "peer", %err, "failed to publish message"),
                 }
                 Ok(false)
             }
@@ -208,6 +249,16 @@ impl PeerManager {
             },
             BehaviourEvent::Identify(event) => {
                 tracing::debug!(target: "peer", ?event, "identify event");
+            }
+            BehaviourEvent::Gossipsub(event) => {
+                if let gossipsub::Event::Message {
+                    message, propagation_source, ..
+                } = event {
+                    tracing::info!(target: "peer", %propagation_source, len = message.data.len(), "received gossipsub message");
+                    if let Err(err) = self.inbound_sender.try_enqueue(message.data.clone()) {
+                        tracing::warn!(target: "peer", %err, "failed to enqueue inbound message");
+                    }
+                }
             }
             BehaviourEvent::Autonat(event) => {
                 tracing::debug!(target:"peer", ?event, "autonat event");

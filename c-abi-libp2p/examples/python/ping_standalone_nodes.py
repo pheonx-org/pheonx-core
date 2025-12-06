@@ -178,18 +178,6 @@ def main() -> None:
 
     node = Node(use_quic=args.use_quic)
 
-    # Demonstrate the internal Rust message queue via the FFI surface.
-    test_payload = b"hello from python via rust queue"
-    print(f"Sending test payload into Rust queue: {test_payload!r}")
-    node.send_message(test_payload)
-    echoed = node.try_receive_message()
-    if echoed == test_payload:
-        print(f"Dequeued payload matches: {echoed!r}")
-    elif echoed is None:
-        print("Queue reported empty when attempting to read the test payload.")
-    else:
-        print(f"Dequeued payload differed: {echoed!r}")
-    
     # Handle graceful shutdown
     running = True
     def signal_handler(sig, frame):
@@ -200,10 +188,23 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    def wait_for_message(timeout: float = 10.0, poll_interval: float = 0.5) -> bytes | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline and running:
+            maybe = node.try_receive_message()
+            if maybe is not None:
+                print(f"Received message from network queue: {maybe!r}", flush=True)
+                return maybe
+            time.sleep(poll_interval)
+        print("No message received within timeout window.", flush=True)
+        return None
+
     try:
         if args.mode == "listen":
             node.listen(args.addr)
-            print("Node is ready. Press Ctrl+C to stop.")
+            print("Node is ready. Waiting for messages...")
+            wait_for_message(timeout=20.0, poll_interval=0.5)
+            print("Listener entering idle loop. Press Ctrl+C to stop.")
             while running:
                 time.sleep(1)
         elif args.mode == "dial":
@@ -219,6 +220,9 @@ def main() -> None:
                     print(f"Dial failed, retrying in 1s ({i+1}/{max_retries})...")
                     time.sleep(1)
             
+            payload = b"hello from dialer via gossipsub"
+            print(f"Publishing payload to peers: {payload!r}", flush=True)
+            node.send_message(payload)
             print("Connection established. Maintaining connection...")
             while running:
                 time.sleep(1)
