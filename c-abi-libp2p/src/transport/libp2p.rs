@@ -8,9 +8,11 @@ use libp2p::{
         transport::{Boxed, Transport},
         upgrade,
     },
+    gossipsub,
     identify, identity,
     kad::{self, store::MemoryStore},
     noise, ping, quic,
+    swarm,
     swarm::{Config as SwarmConfig, Swarm},
     tcp, PeerId, autonat, 
     relay, swarm::behaviour::toggle::Toggle,
@@ -29,6 +31,8 @@ pub struct NetworkBehaviour {
     pub identify: identify::Behaviour,
     /// AutoNAT behaviour to probe for public reachability
     pub autonat: autonat::Behaviour,
+    /// Gossipsub for simple message propagation
+    pub gossipsub: gossipsub::Behaviour,
     /// Relay client for connecting through hop relays.
     pub relay_client: relay::client::Behaviour,
     /// Optional relay server (hop) behaviour for acting as a public relay.
@@ -42,6 +46,7 @@ pub enum BehaviourEvent {
     Ping(ping::Event),
     Identify(identify::Event),
     Autonat(autonat::Event),
+    Gossipsub(gossipsub::Event),
     RelayClient(relay::client::Event),
     RelayServer(relay::Event),
 }
@@ -67,6 +72,12 @@ impl From<identify::Event> for BehaviourEvent {
 impl From<autonat::Event> for BehaviourEvent {
     fn from(event: autonat::Event) -> Self {
         Self::Autonat(event)
+    }
+}
+
+impl From<gossipsub::Event> for BehaviourEvent {
+    fn from(event: gossipsub::Event) -> Self {
+        Self::Gossipsub(event)
     }
 }
 
@@ -117,6 +128,7 @@ impl TransportConfig {
     }
 
     /// Constructs the composite network behaviour using the supplied keypair
+    pub(crate) fn build_behaviour(keypair: &identity::Keypair) -> NetworkBehaviour {
     fn build_behaviour(
         keypair: &identity::Keypair,
         relay_client: relay::client::Behaviour,
@@ -132,6 +144,18 @@ impl TransportConfig {
             .with_interval(Duration::from_secs(30));
         let autonat_config = autonat::Config::default();
 
+        let gossipsub_config = gossipsub::ConfigBuilder::default()
+            .validation_mode(gossipsub::ValidationMode::None)
+            .heartbeat_interval(Duration::from_secs(5))
+            .build()
+            .expect("valid gossipsub config");
+
+        let gossipsub = gossipsub::Behaviour::new(
+            gossipsub::MessageAuthenticity::Signed(keypair.clone()),
+            gossipsub_config,
+        )
+        .expect("gossipsub behaviour");
+
         let relay_server = if hop_relay {
             Toggle::from(Some(relay::Behaviour::new(
                 peer_id,
@@ -146,6 +170,7 @@ impl TransportConfig {
             ping: ping::Behaviour::new(ping_config),
             identify: identify::Behaviour::new(identify_config),
             autonat: autonat::Behaviour::new(peer_id, autonat_config),
+            gossipsub,
             relay_client,
             relay_server,
         }

@@ -40,9 +40,9 @@ Small `ctypes` script that:
    ```bash
    python3 examples/python/ping_two_nodes.py --use-quic
    ```
-4. The script also pushes a sample payload through the Rust core's internal
-   message queue and reads it back to verify the FFI wiring. Look for
-   `Dequeued payload matches` in the output.
+4. The dialer now publishes a payload via the Rust gossipsub bridge and the
+   listener reads it through the FFI queue (`Received message from network
+   queue`). This demonstrates cross-node delivery.
 5. Observe the console: successful runs show both peers listening, dialing, and
    establishing a connection. Ping RTTs appear in the Rust logs when
    `peer=debug` is enabled. The script automatically shuts down both nodes after

@@ -67,6 +67,8 @@ impl ManagedNode {
         let (manager, handle) = peer::PeerManager::new(config)?;
         let autonat_status = handle.autonat_status();
         let message_queue = messaging::MessageQueue::new(messaging::DEFAULT_MESSAGE_QUEUE_CAPACITY);
+        let (manager, handle) =
+            peer::PeerManager::new(config, message_queue.sender())?;
         let worker = runtime.spawn(async move {
             if let Err(err) = manager.run().await {
                 tracing::error!(target: "ffi", %err, "peer manager exited with error");
@@ -96,11 +98,11 @@ impl ManagedNode {
             .context("failed to dial remote")
     }
 
-    /// Enqueues a binary payload into the internal message queue.
-    fn enqueue_message(&self, payload: Vec<u8>) -> Result<()> {
+    /// Publishes a binary payload to connected peers via gossipsub.
+    fn publish_message(&self, payload: Vec<u8>) -> Result<()> {
         self.runtime
-            .block_on(self.message_queue.enqueue(payload))
-            .context("failed to enqueue message")
+            .block_on(self.handle.publish(payload))
+            .context("failed to publish message")
     }
 
     /// Attempts to pull a message from the internal queue without blocking.
@@ -259,10 +261,10 @@ pub extern "C" fn cabi_node_enqueue_message(
     }
 
     let payload = unsafe { slice::from_raw_parts(data_ptr, data_len) }.to_vec();
-    match node.enqueue_message(payload) {
+    match node.publish_message(payload) {
         Ok(_) => CABI_STATUS_SUCCESS,
         Err(err) => {
-            tracing::error!(target: "ffi", %err, "failed to enqueue message");
+            tracing::error!(target: "ffi", %err, "failed to publish message");
             CABI_STATUS_INTERNAL_ERROR
         }
     }

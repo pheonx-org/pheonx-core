@@ -57,4 +57,11 @@ impl MessageQueueSender {
             .await
             .map_err(|err| anyhow!("failed to enqueue message: {err}"))
     }
+
+    /// Attempts to enqueue without awaiting; returns Err if the channel is full or closed.
+    pub fn try_enqueue(&self, payload: Vec<u8>) -> Result<()> {
+        self.sender
+            .try_send(payload)
+            .map_err(|err| anyhow!("failed to enqueue message: {err}"))
+    }
 }
