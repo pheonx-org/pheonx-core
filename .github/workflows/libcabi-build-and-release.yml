@@ -8,7 +8,7 @@ on:
       - "v*"
   workflow_dispatch:
 
-env:    
+env:
   RUST_TOOLCHAIN: "1.91.0"
 
 jobs:
@@ -67,13 +67,22 @@ jobs:
       - name: Collect build artifacts
         run: |
           set -euo pipefail
-          OUTPUT_DIR=../artifacts
-          mkdir -p "${OUTPUT_DIR}/linux-x86_64-gnu"
-          mkdir -p "${OUTPUT_DIR}/linux-aarch64"
-          mkdir -p "${OUTPUT_DIR}/windows-x86_64-gnu"
-          cp target/x86_64-unknown-linux-gnu/release/libcabi_rust_libp2p.so "${OUTPUT_DIR}/linux-x86_64-gnu/" 2>/dev/null || true
-          cp target/aarch64-unknown-linux-gnu/release/libcabi_rust_libp2p.so "${OUTPUT_DIR}/linux-aarch64/" 2>/dev/null || true
-          cp target/x86_64-pc-windows-gnu/release/cabi_rust_libp2p.dll "${OUTPUT_DIR}/windows-x86_64-gnu/" 2>/dev/null || true
+          OUTPUT_DIR=artifacts
+          mkdir -p "${OUTPUT_DIR}"
+
+          # Linux x86_64
+          cp target/x86_64-unknown-linux-gnu/release/libcabi_rust_libp2p.so \
+            "${OUTPUT_DIR}/libcabi_rust_libp2p-linux-x86_64.so" 2>/dev/null || true
+
+          # Linux aarch64
+          cp target/aarch64-unknown-linux-gnu/release/libcabi_rust_libp2p.so \
+            "${OUTPUT_DIR}/libcabi_rust_libp2p-linux-aarch64.so" 2>/dev/null || true
+
+          # Windows x86_64 (GNU)
+          cp target/x86_64-pc-windows-gnu/release/cabi_rust_libp2p.dll \
+            "${OUTPUT_DIR}/cabi_rust_libp2p-windows-x86_64.dll" 2>/dev/null || true
+
+          # Header
           cargo build
           cp cabi-rust-libp2p.h "${OUTPUT_DIR}/" 2>/dev/null || true
 
@@ -81,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: libcabi-rust-libp2p-${{ github.sha }}
-          path: artifacts/
+          path: c-abi-libp2p/artifacts/
           if-no-files-found: error
 
   release:
@@ -104,4 +113,4 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
-
+          overwrite_files: true
