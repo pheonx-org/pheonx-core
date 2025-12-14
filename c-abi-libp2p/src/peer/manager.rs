@@ -16,8 +16,11 @@ use libp2p::{
     autonat,
     kad::{self, QueryResult},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
+
+const DISCOVERY_DIAL_BACKOFF: Duration = Duration::from_secs(30);
 
 use crate::{
     messaging::MessageQueueSender,
@@ -135,6 +138,7 @@ pub struct PeerManager {
     autonat_status: watch::Sender<autonat::NatStatus>,
     discovery_sender: DiscoveryEventSender,
     discovery_queries: HashMap<kad::QueryId, DiscoveryRequest>,
+    discovery_dial_backoff: HashMap<PeerId, HashMap<Multiaddr, Instant>>,
 }
 
 impl PeerManager {
@@ -182,6 +186,7 @@ impl PeerManager {
             autonat_status,
             discovery_sender,
             discovery_queries: HashMap::new(),
+            discovery_dial_backoff: HashMap::new(),
         };
 
         manager.add_bootstrap_peers(bootstrap_peers);
@@ -452,7 +457,7 @@ impl PeerManager {
                 );
 
                 if !peers.is_empty() {
-                    self.emit_peer_records(&request, peers);
+                    self.process_discovered_peers(&request, peers);
                 }
 
                 if is_last {
@@ -484,7 +489,7 @@ impl PeerManager {
                     "find_peer completed without any addresses"
                 );
             } else {
-                self.emit_peer_records(request, &[peer.clone()]);
+                self.process_discovered_peers(request, &[peer.clone()]);
                 status = DiscoveryStatus::Success;
             }
         } else {
@@ -516,7 +521,7 @@ impl PeerManager {
                 "get_closest_peers returned no peers"
             );
         } else {
-            self.emit_peer_records(request, &response.peers);
+            self.process_discovered_peers(request, &response.peers);
         }
 
         if is_last {
@@ -524,9 +529,40 @@ impl PeerManager {
         }
     }
 
-    fn emit_peer_records(&self, request: &DiscoveryRequest, peers: &[kad::PeerInfo]) {
+    fn process_discovered_peers(&mut self, request: &DiscoveryRequest, peers: &[kad::PeerInfo]) {
         for peer in peers {
-            for address in &peer.addrs {
+            if peer.peer_id == self.local_peer_id {
+                tracing::debug!(target: "peer", "skipping self in discovery results");
+                continue;
+            }
+
+            let now = Instant::now();
+            let backoff = self
+                .discovery_dial_backoff
+                .entry(peer.peer_id.clone())
+                .or_default();
+
+            let mut unique_addresses = HashSet::new();
+
+            for address in peer
+                .addrs
+                .iter()
+                .cloned()
+                .filter(|addr| unique_addresses.insert(addr.clone()))
+            {
+                if let Some(next_allowed) = backoff.get(&address) {
+                    if *next_allowed > now {
+                        tracing::debug!(
+                            target: "peer",
+                            peer_id = %peer.peer_id,
+                            %address,
+                            remaining_ms = next_allowed.saturating_duration_since(now).as_millis(),
+                            "skipping discovery dial due to backoff",
+                        );
+                        continue;
+                    }
+                }
+
                 let event = DiscoveryEvent::Address {
                     request_id: request.request_id,
                     target_peer_id: request.target_peer_id.clone(),
@@ -537,6 +573,24 @@ impl PeerManager {
                 if let Err(err) = self.discovery_sender.try_enqueue(event) {
                     tracing::warn!(target: "peer", %err, "failed to enqueue discovery address");
                 }
+
+                match self.swarm.dial(address.clone()) {
+                    Ok(_) => tracing::info!(
+                        target: "peer",
+                        peer_id = %peer.peer_id,
+                        %address,
+                        "dialing discovered peer",
+                    ),
+                    Err(err) => tracing::warn!(
+                        target: "peer",
+                        peer_id = %peer.peer_id,
+                        %address,
+                        %err,
+                        "failed to dial discovered peer",
+                    ),
+                }
+
+                backoff.insert(address, now + DISCOVERY_DIAL_BACKOFF);
             }
         }
     }
