@@ -14,7 +14,7 @@ TransportConfig::build() → (identity::Keypair, Swarm<NetworkBehaviour>)
 ```
 
 1. **Choose or generate the identity key.**
-   - If `TransportConfig` was constructed with `with_identity`, the provided key is reused.
+   - If `TransportConfig` was constructed with `with_identity_seed`, the provided 32-byte seed is used to derive an `Ed25519` keypair.
    - Otherwise a new `Ed25519` keypair is generated. Its public key defines the local `PeerId`.
 2. **Create the transport.**
    - By default we compose TCP + Noise + Yamux.
@@ -62,7 +62,19 @@ PeerManager::run() — asynchronous loop
 - The identity can be accessed through:
   - `PeerManager::peer_id()` – returns the `PeerId`.
   - `PeerManager::keypair()` – returns the keypair (e.g. for persistence).
-- Because the same keypair always produces the same `PeerId`, reusing it across launches keeps the node's identity stable.
+- Because the same keypair always produces the same `PeerId`, reusing it across launches keeps the node's identity stable. Passing the same `identity_seed` to peers on both ends is enough to get deterministic keypairs and predictable connection setup paths.
+
+## Example: deterministic identity configuration
+
+```rust
+use cabi_rust_libp2p::transport::TransportConfig;
+
+let seed = [0u8; 32];
+let config = TransportConfig::new(true, false).with_identity_seed(seed);
+let (keypair, swarm) = config.build()?;
+```
+
+Sharing the same seed between two nodes yields identical `PeerId`s so tests and reproducible environments can coordinate deterministic connections.
 
 ## 4. Related tests
 

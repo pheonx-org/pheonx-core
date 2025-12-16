@@ -297,6 +297,7 @@ dependencies = [
  "base64",
  "cbindgen",
  "futures",
+ "hex",
  "libp2p",
  "once_cell",
  "tokio",
