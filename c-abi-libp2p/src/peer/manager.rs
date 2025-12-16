@@ -55,6 +55,7 @@ pub enum PeerCommand {
 pub struct PeerManagerHandle {
     command_sender: mpsc::Sender<PeerCommand>,
     autonat_status: watch::Receiver<autonat::NatStatus>,
+    local_peer_id: PeerId,
 }
 
 impl PeerManagerHandle {
@@ -69,6 +70,11 @@ impl PeerManagerHandle {
     /// Returns a watch channel receiver that yields AutoNAT status updates.
     pub fn autonat_status(&self) -> watch::Receiver<autonat::NatStatus> {
         self.autonat_status.clone()
+    }
+
+    /// Returns the local peer identifier.
+    pub fn local_peer_id(&self) -> PeerId {
+        self.local_peer_id.clone()
     }
 
     /// Initiates a find_peer query against the DHT.
@@ -210,6 +216,7 @@ impl PeerManager {
         let handle = PeerManagerHandle {
             command_sender,
             autonat_status: autonat_status_receiver,
+            local_peer_id: local_peer_id.clone(),
         };
         Ok((manager, handle))
     }

@@ -155,6 +155,11 @@ impl ManagedNode {
         self.message_queue.try_dequeue()
     }
 
+    /// Returns the local peer identifier.
+    fn local_peer_id(&self) -> PeerId {
+        self.handle.local_peer_id()
+    }
+
     /// Requsets to gracefully shutdown peer manager and joins the background tasks
     fn shutdown(&mut self) {
         if let Err(err) = self.runtime.block_on(self.handle.shutdown()) {
@@ -233,7 +238,7 @@ pub extern "C" fn cabi_node_new_with_relay(
     use_quic: bool,
     enable_relay_hop: bool,
 ) -> *mut CabiNodeHandle {
-        cabi_node_new_with_relay_bootstrap_and_seed(
+    cabi_node_new_with_relay_bootstrap_and_seed(
         use_quic,
         enable_relay_hop,
         std::ptr::null(),
@@ -250,7 +255,7 @@ pub extern "C" fn cabi_node_new_with_relay_and_bootstrap(
     enable_relay_hop: bool,
     bootstrap_peers: *const *const c_char,
     bootstrap_peers_len: usize,
-    ) -> *mut CabiNodeHandle {
+) -> *mut CabiNodeHandle {
     cabi_node_new_with_relay_bootstrap_and_seed(
         use_quic,
         enable_relay_hop,
@@ -316,6 +321,23 @@ pub extern "C" fn cabi_node_new_with_relay_bootstrap_and_seed(
             ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+/// C-ABI. Writes the local PeerId into the provided buffer as a UTF-8 string.
+pub extern "C" fn cabi_node_local_peer_id(
+    handle: *mut CabiNodeHandle,
+    out_buffer: *mut c_char,
+    buffer_len: usize,
+    written_len: *mut usize,
+) -> c_int {
+    let node = match node_from_ptr(handle) {
+        Ok(node) => node,
+        Err(status) => return status,
+    };
+
+    let peer_id = node.local_peer_id().to_string();
+    write_c_string(&peer_id, out_buffer, buffer_len, written_len)
 }
 
 #[no_mangle]
