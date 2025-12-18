@@ -102,6 +102,7 @@ struct Arguments
 {
   Role role = Role::Leaf;
   bool useQuic = false;
+  bool forceHop = false;
   string listen;
   std::vector<string> bootstrapPeers{};
   std::vector<string> targetPeers{};
@@ -270,6 +271,10 @@ Arguments parseArgs(int argc, char** argv)
     {
       args.useQuic = true;
     }
+    else if (arg == "--force-hop")
+    {
+      args.forceHop = true;
+    }
     else if (arg == "--listen" && i + 1 < argc)
     {
       args.listen = argv[++i];
@@ -308,6 +313,7 @@ Arguments parseArgs(int argc, char** argv)
             << "  --use-quic\n"
             << "  --listen <multiaddr>\n"
             << "  --bootstrap <multiaddr> (repeatable)\n"
+            << "  --force-hop (relay only; start with hop enabled without waiting for AutoNAT)\n"
             << "  --target <multiaddr> (repeatable)\n"
             << "  --seed <64-hex-bytes> (deterministic PeerId)\n"
             << "  --seed-phrase <string> (derive 32-byte seed deterministically)\n";
@@ -597,28 +603,35 @@ int main(int argc, char** argv)
     // Relay node behaviour
     if (args.role == Role::Relay)
     {
-      std::chrono::seconds waitTime(10);
-      cout << "Waiting up to " << waitTime.count() << "s for PUBLIC AutoNAT status before enabling relay hop...\n";
-      
-      // Step 6. Try understand wheter node is public or private
-      // And if public, remake the node
-      if (waitForPublicAutonat(abi, node.handle, waitTime))
+      if (args.forceHop)
       {
-        cout << "AutoNAT is PUBLIC; restarting with relay hop enabled\n";
-        node.reset();
-        node.reset(createNode(abi, args.useQuic, true, args.bootstrapPeers, args.identitySeed));
-
-        status = abi.ListenNode(node.handle, args.listen.c_str());
-        cout << "Listening with hop relay on " << args.listen << "\n";
-        if (status != CABI_STATUS_SUCCESS)
-        {
-          throw std::runtime_error("cabi_node_listen failed after hop restart: " + statusMessage(status));
-        }
-        cout << "Local PeerId: " << readPeerId(abi, node.handle) << "\n";
+        cout << "Force hop enabled; skipping AutoNAT wait\n";
       }
       else
       {
-        cout << "AutoNAT did not report PUBLIC within window; staying without hop\n";
+        std::chrono::seconds waitTime(10);
+        cout << "Waiting up to " << waitTime.count() << "s for PUBLIC AutoNAT status before enabling relay hop...\n";
+        
+        // Step 6. Try understand wheter node is public or private
+        // And if public, remake the node
+        if (waitForPublicAutonat(abi, node.handle, waitTime))
+        {
+          cout << "AutoNAT is PUBLIC; restarting with relay hop enabled\n";
+          node.reset();
+          node.reset(createNode(abi, args.useQuic, true, args.bootstrapPeers, args.identitySeed));
+
+          status = abi.ListenNode(node.handle, args.listen.c_str());
+          cout << "Listening with hop relay on " << args.listen << "\n";
+          if (status != CABI_STATUS_SUCCESS)
+          {
+            throw std::runtime_error("cabi_node_listen failed after hop restart: " + statusMessage(status));
+          }
+          cout << "Local PeerId: " << readPeerId(abi, node.handle) << "\n";
+        }
+        else
+        {
+          cout << "AutoNAT did not report PUBLIC within window; staying without hop\n";
+        }
       }
     }
 
