@@ -1,4 +1,21 @@
-# Building
+# ping (C++ ↔ Rust libp2p C-ABI)
+
+Small C++ CLI that loads a node via Rust `cabi_rust_libp2p` lib through a C-ABI and lets you:
+- run a node as **relay** or **leaf**
+- `listen` on a multiaddr
+- `dial` bootstrap/target peers
+- send/receive payloads via an internal message queue
+- (relay) optionally enable **hop relay** when AutoNAT reports PUBLIC (or force it)
+
+## Requirements
+
+- C++17 compiler (MSVC / clang / g++)
+- CMake
+- Rust shared library built:
+  - Linux: `libcabi_rust_libp2p.so`
+  - Windows: `cabi_rust_libp2p.dll`
+
+## Build
 ### Builiding with MSVC
 ```
 cmake -S . -B build -G "Visual Studio 17 2022"
@@ -12,18 +29,21 @@ cd build-release
 cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build .
 ```
+
 ### Building with Docker
 ```
 docker compose up --build cpp-build
 ```
 
 ## Use
+### Quick Start
 1. Copy .dll or .so of the cabi-rust-libp2p into folder near executable
 2. Run through cmd/terminal
-3. `./ping --use-quic --lport 41001 --dport 41002`
-4. `./ping --use-quic --lport 41002 --dport 41001`
+3. `./ping --role relay --force-hop --listen /ip4/0.0.0.0/tcp/41000 --seed-phrase relay-one`
+4. `./ping --listen /ip4/0.0.0.0/tcp/41001 --bootstrap /ip4/<relay-ip>/tcp/41000/p2p/<RELAY_ID> --seed-phrase peer-a`
+5. `./ping --listen /ip4/0.0.0.0/tcp/41002 --bootstrap /ip4/<relay-ip>/tcp/41000/p2p/<RELAY_ID> --seed-phrase peer-b`
 
-## Running a relay + two peers (deterministic IDs)
+### Running a relay + two peers (deterministic IDs)
 
 You can pin the `PeerId` of each node by supplying either a 32-byte hex seed
 (`--seed <64 hex chars>`) **or** a human-friendly seed phrase that is
@@ -32,7 +52,7 @@ you to pre-compute relay/peer multiaddrs and wire them together reproducibly:
 
 1. Start the public relay (waits for PUBLIC AutoNAT and restarts with hop):
    ```
-   ./ping --role relay --listen /ip4/0.0.0.0/tcp/41000 --seed-phrase relay-one
+   ./ping --role relay --force-hop --listen /ip4/0.0.0.0/tcp/41000 --seed-phrase relay-one
    ```
    Note the `Local PeerId` printed to the console; call it `<RELAY_ID>`.
 
