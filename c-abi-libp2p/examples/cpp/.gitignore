@@ -1,7 +1,7 @@
 #dirs
 /.vs
-/out
-/build
+**/*out*/
+**/*build*/
 
 #Extensions
 *.json
