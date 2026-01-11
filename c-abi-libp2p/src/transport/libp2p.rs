@@ -37,8 +37,8 @@ pub struct NetworkBehaviour {
     pub relay_client: relay::client::Behaviour,
     /// Optional relay server (hop) behaviour for acting as a public relay.
     pub relay_server: Toggle<relay::Behaviour>,
-    /// Rendezvous client for asking for a catalog of peers 
-    pub rendezvous_client: rendezvous::client::Behaviour,
+    /// Optional Rendezvous client for asking for a catalog of peers 
+    pub rendezvous_client: Toggle<rendezvous::client::Behaviour>,
     /// Optional Rendezvous server for storing and sharing catalog of peers
     pub rendezvous_server: Toggle<rendezvous::server::Behaviour>,
 }
@@ -118,6 +118,8 @@ pub struct TransportConfig {
     pub use_quic: bool,
     /// Controls whether the node should also act as a hop relay.
     pub hop_relay: bool,
+    /// Controls whether rendezvous behaviours are enabled.
+    pub enable_rendezvous: bool,
     /// Optional seed for deriving an exact Ed25519 identity keypair.
     pub identity_seed: Option<[u8; 32]>,
 }
@@ -127,6 +129,7 @@ impl Default for TransportConfig {
         Self {
             use_quic: false, // Turn on for quic
             hop_relay: false, // Turn on for node act as relay (at least try)
+            enable_rendezvous: false, // FEATURE NOT USED. Turn on for rendezvous client/server
             identity_seed: None, // Pass to use identity seed for generating keypair
         }
     }
@@ -150,6 +153,13 @@ impl TransportConfig {
         self
     }
 
+
+    /// Enables or disables rendezvous client/server behaviours.
+    pub fn with_rendezvous_enabled(mut self, enable: bool) -> Self {
+        self.enable_rendezvous = enable;
+        self
+    }
+
     /// Builds the swarm using the provided configuration.
     pub fn build(&self) -> Result<(identity::Keypair, Swarm<NetworkBehaviour>)> {
         let keypair = if let Some(seed) = self.identity_seed {
@@ -162,13 +172,20 @@ impl TransportConfig {
         };
         let local_peer_id = PeerId::from(keypair.public());
         let (transport, relay_client) = self.build_transport(&keypair, local_peer_id)?;
-        let behaviour = Self::build_behaviour(&keypair, relay_client, self.hop_relay);
+        let behaviour = Self::build_behaviour(
+            &keypair,
+            relay_client,
+            self.hop_relay,
+            self.enable_rendezvous,
+        );
+
         let swarm = Swarm::new(
             transport,
             behaviour,
             local_peer_id,
             SwarmConfig::with_tokio_executor(),
         );
+
         Ok((keypair, swarm))
     }
 
@@ -177,6 +194,7 @@ impl TransportConfig {
         keypair: &identity::Keypair,
         relay_client: relay::client::Behaviour,
         hop_relay: bool,
+        enable_rendezvous: bool,
     ) -> NetworkBehaviour {
         let peer_id = PeerId::from(keypair.public());
         let mut kad_config = kad::Config::default();
@@ -207,7 +225,13 @@ impl TransportConfig {
             Toggle::from(None)
         };
 
-        let rendezvous_client = rendezvous::client::Behaviour::new(keypair.clone());
+        let rendezvous_client = if enable_rendezvous {
+            Toggle::from(Some(rendezvous::client::Behaviour::new(
+                keypair.clone(),
+            )))
+        } else {
+            Toggle::from(None)
+        };
 
         let rendezvous_server = if hop_relay {
             Toggle::from(
