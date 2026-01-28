@@ -626,8 +626,28 @@ pub extern "C" fn cabi_node_get_addrs_snapshot(
     out_buf_len: usize,
     out_written: *mut usize,
 ) -> c_int {
-    // TODO
-    return 0;
+    let node = match node_from_ptr(handle) {
+        Ok(node) => node,
+        Err(status) => return status,
+    };
+
+    if out_version.is_null() {
+        return CABI_STATUS_NULL_POINTER;
+    }
+
+    let (version, snapshot) = match node.addr_state.read() {
+        Ok(state) => (state.version(), state.snapshot_string()),
+        Err(_) => {
+            tracing::warn!(target:"ffi", "addr_state lock poisoned");
+            return CABI_STATUS_INTERNAL_ERROR;
+        }
+    };
+
+    unsafe {
+        *out_version = version;
+    }
+
+    write_c_string(&snapshot, out_buf, out_buf_len, out_written)
 }
 
 #[no_mangle]
