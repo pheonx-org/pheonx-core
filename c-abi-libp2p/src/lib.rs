@@ -60,12 +60,6 @@ pub const CABI_DISCOVERY_EVENT_ADDRESS: c_int = 0;
 /// Discovery query has finished.
 pub const CABI_DISCOVERY_EVENT_FINISHED: c_int = 1;
 
-pub const CABI_ADDR_EVENT_LISTEN_ADDED: c_int = 0;
-pub const CABI_ADDR_EVENT_LISTEN_REMOVED: c_int = 1;
-pub const CABI_ADDR_EVENT_EXTERNAL_CONFIRMED: c_int = 2;
-pub const CABI_ADDR_EVENT_EXTERNAL_EXPIRED: c_int = 3;
-pub const CABI_ADDR_EVENT_RELAY_READY: c_int = 4;
-
 /// Opaque handle that callers treat as an identifier for a running node.
 #[repr(C)]
 pub struct CabiNodeHandle {
