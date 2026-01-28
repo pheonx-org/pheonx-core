@@ -20,12 +20,16 @@ use libp2p::{
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
 use tokio::sync::{mpsc, watch};
 
 const DISCOVERY_DIAL_BACKOFF: Duration = Duration::from_secs(30);
 
 use crate::{
-    AddrEventSender, AddrEvent, messaging::MessageQueueSender, peer::discovery::{DiscoveryEvent, DiscoveryEventSender, DiscoveryStatus}, transport::{BehaviourEvent, NetworkBehaviour, TransportConfig}
+    addr_events::{AddrState, AddrEvent}, 
+    messaging::MessageQueueSender, 
+    discovery::{DiscoveryEvent, DiscoveryEventSender, DiscoveryStatus}, 
+    transport::{BehaviourEvent, NetworkBehaviour, TransportConfig},
     //config::DEFAULT_BOOTSTRAP_PEERS, // Dunno. Its empty should be here
 };
 
@@ -157,7 +161,7 @@ pub struct PeerManager {
     discovery_dial_backoff: HashMap<PeerId, HashMap<Multiaddr, Instant>>,
     relay_base_address: Option<Multiaddr>,
     relay_peer_id: Option<PeerId>,
-    addr_event_sender: AddrEventSender,
+    addr_state: Arc<RwLock<AddrState>>,
 }
 
 impl PeerManager {
@@ -166,7 +170,7 @@ impl PeerManager {
         config: TransportConfig,
         inbound_sender: MessageQueueSender,
         discovery_sender: DiscoveryEventSender,
-        addr_event_sender: AddrEventSender,
+        addr_state: Arc<RwLock<AddrState>>,
         bootstrap_peers: Vec<Multiaddr>,
     ) -> Result<(Self, PeerManagerHandle)> {
         let (keypair, swarm) = config.build()?;
@@ -209,7 +213,7 @@ impl PeerManager {
             discovery_dial_backoff: HashMap::new(),
             relay_base_address: None,
             relay_peer_id: None,
-            addr_event_sender,
+            addr_state,
         };
 
         manager.add_bootstrap_peers(bootstrap_peers);
@@ -377,13 +381,9 @@ impl PeerManager {
             SwarmEvent::NewListenAddr { address, .. } => {
                 tracing::info!(target: "peer", %address, "listening on new address");
 
-                if let Err(err) = self.addr_event_sender
-                    .try_enqueue(AddrEvent::ListenerAdded { 
-                        address: address.clone() 
-                    })
-                {
-                    tracing::warn!(target: "peer", %err, "failed to enqueue ListenerAdded event");
-                }
+                self.emit_addr_event(AddrEvent::ListenerAdded {
+                    address: address.clone(),
+                });
 
                 self.update_relay_address(address);
             }
@@ -419,13 +419,9 @@ impl PeerManager {
             SwarmEvent::ExternalAddrConfirmed { address } => {
                 tracing::info!(target: "peer", %address, "external address confirmed");
 
-                if let Err(err) = self.addr_event_sender
-                    .try_enqueue(AddrEvent::ExternalConfirmed { 
-                        address: address.clone() 
-                    })
-                {
-                    tracing::warn!(target: "peer", %err, "failed to enqueue ExternalConfirmed event");
-                }
+                self.emit_addr_event(AddrEvent::ExternalConfirmed {
+                    address: address.clone(),
+                });
 
                 self.update_relay_address(address);
             }
@@ -434,13 +430,9 @@ impl PeerManager {
                 tracing::warn!(target: "peer", %address, "external address expired");
                 self.clear_relay_address(&address);
 
-                if let Err(err) = self.addr_event_sender
-                    .try_enqueue(AddrEvent::ExternalExpired { 
-                        address: address.clone() 
-                    })
-                {
-                    tracing::warn!(target: "peer", %err, "failed to enqueue ExternalExpired event");
-                }
+                self.emit_addr_event(AddrEvent::ExternalExpired {
+                    address: address.clone(),
+                });
             }
 
             SwarmEvent::ListenerClosed {
@@ -450,13 +442,7 @@ impl PeerManager {
 
                 // ListenerClosed can contain multiple addresses. Emit removal for each.
                 for address in addresses {
-                    if let Err(err) = self.addr_event_sender
-                        .try_enqueue(AddrEvent::ListenRemoved {
-                        address
-                        })
-                    {
-                        tracing::warn!(target: "peer", %err, "failed to enqueue ListenRemoved event");
-                    }
+                    self.emit_addr_event(AddrEvent::ListenerRemoved { address });
                 }
             }
 
@@ -878,9 +864,7 @@ impl PeerManager {
                 reachable.push(Protocol::P2pCircuit);
                 reachable.push(Protocol::P2p(self.local_peer_id.clone()));
 
-                let _ = self.addr_event_sender.try_enqueue(AddrEvent::RelayReachableReady {
-                    address: reachable,
-                });
+                self.emit_addr_event(AddrEvent::RelayReachableReady { address: reachable });
             }
 
             self.relay_base_address = Some(base_address);
@@ -902,9 +886,23 @@ impl PeerManager {
             if self.relay_base_address.as_ref() == Some(&base_address) {
                 tracing::info!(target: "peer", %base_address, "clearing relay base address");
                 self.relay_base_address = None;
+
+                // relay reachable snapshot clear
+                self.emit_addr_event(AddrEvent::RelayReachableLost);
             }
         }
     }
+
+    fn emit_addr_event(&mut self, ev: AddrEvent) {
+        if let Ok(mut st) = self.addr_state.write() {
+            st.apply(&ev);
+        } else {
+            tracing::warn!(target:"peer", "addr_state lock poisoned");
+        }
+
+        tracing::debug!(target:"peer", ?ev, "addr event");
+    }
+
 }
 
 fn extract_peer_id(address: &Multiaddr) -> Option<PeerId> {

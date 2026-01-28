@@ -5,8 +5,7 @@ pub mod manager;
 pub mod addr_events;
 
 pub use addr_events::{
-    AddrEvent, AddrEventQueue, AddrEventSender,
-    DEFAULT_ADDR_EVENTS_CAPACITY,
+    AddrEvent, AddrState,
 };
 
 pub use discovery::{

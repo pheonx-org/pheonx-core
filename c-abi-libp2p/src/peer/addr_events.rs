@@ -1,9 +1,13 @@
-
-use anyhow::{anyhow, Result};
 use libp2p::core::Multiaddr;
-use tokio::sync::mpsc;
 
-pub const DEFAULT_ADDR_EVENTS_CAPACITY: usize = 64;
+#[derive(Debug, Default)]
+pub struct AddrState {
+    listen: std::collections::HashSet<Multiaddr>,
+    external_confirmed: std::collections::HashSet<Multiaddr>,
+    relay_reachable: Option<Multiaddr>,
+    version: u64,
+}
+
 
 /// Events happening with addreses of the peer
 #[derive(Debug, Clone)]
@@ -17,7 +21,7 @@ pub enum AddrEvent {
 
     /// Local listen addr was removed
     /// Source: `SwarmEvent::ListenerClosed`
-    ListenRemoved { 
+    ListenerRemoved { 
         address: Multiaddr,
     },
 
@@ -35,50 +39,70 @@ pub enum AddrEvent {
     },
 
     /// Relay-based addr is added and ready to use
-    /// Source: `PeerManager::`
-    RelayReachableReady{
+    /// Source: `PeerManager::update_relay_address` (derived from relay reservation)
+    RelayReachableReady {
         address: Multiaddr,
     },
+
+    /// Relay-reachable self address is no longer valid (reservation lost / expired)
+    /// Source: `PeerManager::clear_relay_address` when current relay base is cleared
+    RelayReachableLost
 }
 
-/// Queue used to pass addr events from the peer manager to the C-ABI.
-#[derive(Debug)]
-pub struct AddrEventQueue {
-    sender: mpsc::Sender<AddrEvent>,
-    receiver: mpsc::Receiver<AddrEvent>,
-}
+impl AddrState {
+    pub fn apply(&mut self, ev: &AddrEvent) {
+        use AddrEvent::*;
+        match ev {
+            ListenerAdded { address } => {
+                if self.listen.insert(address.clone()) { self.version += 1; }
+            }
 
-/// Cloneable sender handle for enqueuing addr events.
-#[derive(Clone, Debug)]
-pub struct AddrEventSender {
-    sender: mpsc::Sender<AddrEvent>,
-}
+            ListenerRemoved { address } => {
+                if self.listen.remove(address) { self.version += 1; }
+            }
 
-impl AddrEventQueue {
-    /// Create a new `AddrEventQueue`
-    pub fn new(capacity: usize) -> Self {
-        let (sender, receiver) = mpsc::channel(capacity);
-        Self { sender, receiver }
-    }
+            ExternalConfirmed { address } => {
+                if self.external_confirmed.insert(address.clone()) { self.version += 1; }
+            }
 
-    /// Get a copy of a sender for `AddrEventQueue`
-    pub fn sender(&self) -> AddrEventSender {
-        AddrEventSender {
-            sender: self.sender.clone(),
+            ExternalExpired { address } => {
+                if self.external_confirmed.remove(address) { self.version += 1; }
+            }
+
+            RelayReachableReady { address } => {
+                if self.relay_reachable.as_ref() != Some(address) {
+                    self.relay_reachable = Some(address.clone());
+                    self.version += 1;
+                }
+            }
+
+            RelayReachableLost => {
+                if self.relay_reachable.take().is_some() {
+                    self.version += 1;
+                }
+            }
         }
     }
 
-    /// Try to get last event from the `AddrEventQueue`
-    pub fn try_dequeue(&mut self) -> Option<AddrEvent> {
-        self.receiver.try_recv().ok()
-    }
-}
+    // Public function to get cur version of snapshot for ABI
+    pub fn version(&self) -> u64 { self.version }
 
-impl AddrEventSender {
-    /// Try to enqueue event in to `AddrEventQueue`
-    pub fn try_enqueue(&self, event: AddrEvent) -> Result<()> {
-        self.sender
-            .try_send(event)
-            .map_err(|err| anyhow!("failed to enqueue addr event: {err}"))
+    // Public function to give snapshot string of addreses for ABI
+    pub fn snapshot_string(&self) -> String {
+        let mut out: Vec<String> = Vec::new();
+
+        if let Some(a) = &self.relay_reachable {
+            out.push(a.to_string());
+        }
+
+        let mut ext: Vec<String> = self.external_confirmed.iter().map(|a| a.to_string()).collect();
+        ext.sort();
+        out.extend(ext);
+
+        let mut lis: Vec<String> = self.listen.iter().map(|a| a.to_string()).collect();
+        lis.sort();
+        out.extend(lis);
+
+        out.join("\n")
     }
 }

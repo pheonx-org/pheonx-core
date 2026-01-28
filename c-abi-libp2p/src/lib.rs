@@ -17,6 +17,7 @@ use std::{
     slice,
     str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
+    sync::{Arc, RwLock},
 };
 
 use anyhow::{Context, Result};
@@ -80,7 +81,7 @@ struct ManagedNode {
     message_queue: messaging::MessageQueue,
     discovery_queue: peer::DiscoveryQueue,
     discovery_sequence: AtomicU64,
-    addr_event_queue: peer::AddrEventQueue
+    addr_state: Arc<RwLock<AddrState>>,
 }
 
 impl ManagedNode {
@@ -89,13 +90,13 @@ impl ManagedNode {
         let runtime = Runtime::new().context("failed to create tokio runtime")?;
         let message_queue = messaging::MessageQueue::new(messaging::DEFAULT_MESSAGE_QUEUE_CAPACITY);
         let discovery_queue = peer::DiscoveryQueue::new(peer::DEFAULT_DISCOVERY_QUEUE_CAPACITY);
-        let addr_event_queue = peer::AddrEventQueue::new(peer::DEFAULT_ADDR_EVENTS_CAPACITY);
+        let addr_state = Arc::new(RwLock::new(AddrState::default()));
 
         let (manager, handle) = peer::PeerManager::new(
             config,
             message_queue.sender(),
             discovery_queue.sender(),
-            addr_event_queue.sender(),
+            addr_state.clone(),
             bootstrap_peers,
         )?;
 
@@ -114,7 +115,7 @@ impl ManagedNode {
             message_queue,
             discovery_queue,
             discovery_sequence: AtomicU64::new(0),
-            addr_event_queue,
+            addr_state,
         })
     }
 
@@ -166,11 +167,6 @@ impl ManagedNode {
     /// Attempts to dequeue the next discovery event without blocking.
     fn try_dequeue_discovery(&mut self) -> Option<peer::DiscoveryEvent> {
         self.discovery_queue.try_dequeue()
-    }
-
-    /// Tries to dequeue the next Addr event without blocking.
-    fn try_dequeue_addr_event(&mut self) -> Option<peer::AddrEvent> {
-        self.addr_event_queue.try_dequeue()
     }
 
     /// Attempts to pull a message from the internal queue without blocking.
@@ -623,68 +619,15 @@ pub extern "C" fn cabi_node_dequeue_discovery_event(
 }
 
 #[no_mangle]
-/// C-ABI. Attempts to dequeue an addr event from the node
-pub extern "C" fn cabi_node_dequeue_addr_event(
+pub extern "C" fn cabi_node_get_addrs_snapshot(
     handle: *mut CabiNodeHandle,
-    out_kind: *mut c_int,
-    addr_buf: *mut c_char,
-    addr_buf_len: usize,
-    out_written: *mut usize
+    out_version: *mut u64,
+    out_buf: *mut std::os::raw::c_char,
+    out_buf_len: usize,
+    out_written: *mut usize,
 ) -> c_int {
-    let node = match node_from_ptr(handle) {
-        Ok(node) => node,
-        Err(status) => return status,
-    };
-
-    if out_kind.is_null() || addr_buf.is_null() || out_written.is_null() {
-        return CABI_STATUS_NULL_POINTER;
-    }
-
-    if addr_buf_len == 0 {
-        return CABI_STATUS_INVALID_ARGUMENT;
-    }
-
-    unsafe {
-        *out_written = 0;
-    }
-
-    let ev = match node.try_dequeue_addr_event() {
-        Some(ev) => ev,
-        None => return CABI_STATUS_QUEUE_EMPTY,
-    };
-
-    let (kind, addr_str) = match ev {
-        peer::AddrEvent::ListenerAdded { address } => (
-            CABI_ADDR_EVENT_LISTEN_ADDED,
-            address.to_string(),
-        ),
-
-        peer::AddrEvent::ListenRemoved { address } => (
-            CABI_ADDR_EVENT_LISTEN_REMOVED,
-            address.to_string(),
-        ),
-
-        peer::AddrEvent::ExternalConfirmed { address } => (
-            CABI_ADDR_EVENT_EXTERNAL_CONFIRMED,
-            address.to_string(),
-        ),
-
-        peer::AddrEvent::ExternalExpired { address } => (
-            CABI_ADDR_EVENT_EXTERNAL_EXPIRED,
-            address.to_string(),
-        ),
-
-        peer::AddrEvent::RelayReachableReady { address } => (
-            CABI_ADDR_EVENT_RELAY_READY,
-            address.to_string(),
-        ),
-    };
-
-    unsafe {
-        *out_kind = kind;
-    }
-
-    write_c_string(addr_str.as_str(), addr_buf, addr_buf_len, out_written)
+    // TODO
+    return 0;
 }
 
 #[no_mangle]

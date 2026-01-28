@@ -57,9 +57,9 @@ constexpr int CABI_AUTONAT_PUBLIC  = 2;
 
 // Payload statuses
 // Queue contains no new messages.
-constexpr int CABI_STATUS_QUEUE_EMPTY = 4;
+constexpr int CABI_STATUS_QUEUE_EMPTY = -1;
 // Provided buffer too small to hold the next message.
-constexpr int CABI_STATUS_BUFFER_TOO_SMALL = 5;
+constexpr int CABI_STATUS_BUFFER_TOO_SMALL = -2;
 // Default capacity for the message queue.
 constexpr int DEFAULT_MESSAGE_QUEUE_CAPACITY = 64;
 
@@ -565,6 +565,7 @@ void sendLoop(
   std::atomic<bool>& keepRunning)
 {
   cout << "Enter payload (empty line or /quit to exit):\n";
+  cout << "Enter /addrs to read your listening addresses\n";
   string line;
 
   while (keepRunning.load(std::memory_order_acquire) && std::getline(std::cin, line))
@@ -574,6 +575,12 @@ void sendLoop(
     {
       keepRunning.store(false, std::memory_order_release);
       break;
+    }
+
+    // Addrs scenario
+    if (line == "/addrs")
+    {
+      drainAddrEvents(abi, node);
     }
 
     // This one sends the payloads
@@ -731,8 +738,6 @@ int main(int argc, char** argv)
     // Step 7. Initail dial to know active peers from bootstrap and target
     dialPeers(abi, node.handle, args.bootstrapPeers, "bootstrap");
     dialPeers(abi, node.handle, args.targetPeers, "target");
-
-    drainAddrEvents(abi, node.handle);
 
     std::thread receiver(
       recvLoop,
